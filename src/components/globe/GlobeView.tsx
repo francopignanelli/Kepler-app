@@ -449,6 +449,22 @@ export default function GlobeView({
   }, [stations, ready]);
 
   // -- trayectorias de estaciones ------------------------------------------------
+  // `stations` cambia de referencia cada 5 s (poll de posición), pero el
+  // ground track solo se recalcula cada 5 min. Si este efecto dependiera de
+  // `stations` directamente, reconstruiría las líneas 3D desde cero 12 veces
+  // por minuto sin necesidad: con pathTransitionDuration(0) cada reconstrucción
+  // es un destroy+create inmediato de la geometría, y bajo ese churn constante
+  // el path puede quedar sin recrearse a mitad de un ciclo (la trayectoria
+  // "se pierde" y ni apagar/prender la capa la trae de vuelta, porque el
+  // siguiente poll de posición vuelve a dispararlo). Se usa una firma estable
+  // (id de estación + timestamp del track) como dependencia real, y un ref
+  // para leer los datos actuales de estación sin declarar `stations` como dep.
+  const stationsRef = useRef(stations);
+  useEffect(() => {
+    stationsRef.current = stations;
+  }, [stations]);
+  const trackSignature = stations.map((s) => `${s.info.id}:${s.track?.generatedAt ?? 0}`).join("|");
+
   useEffect(() => {
     const globe = globeRef.current;
     if (!globe || !ready) return;
@@ -461,7 +477,7 @@ export default function GlobeView({
       p.lon,
       p.altitudeKm / EARTH_RADIUS_KM,
     ];
-    const paths: PathDatum[] = stations.flatMap((s) => {
+    const paths: PathDatum[] = stationsRef.current.flatMap((s) => {
       if (!s.track) return [];
       const track: GroundTrack = s.track;
       return [
@@ -482,7 +498,7 @@ export default function GlobeView({
       .pathDashLength((d) => ((d as PathDatum).kind === "future" ? 0.06 : 1))
       .pathDashGap((d) => ((d as PathDatum).kind === "future" ? 0.025 : 0))
       .pathDashAnimateTime((d) => ((d as PathDatum).kind === "future" ? 18_000 : 0));
-  }, [stations, layers.track, ready]);
+  }, [trackSignature, layers.track, ready]);
 
   // -- satélites sobre el observador (explorador) ---------------------------------
   useEffect(() => {
