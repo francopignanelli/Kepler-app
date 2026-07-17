@@ -256,6 +256,10 @@ export default function GlobeView({
         .atmosphereColor("#4f7dff")
         .atmosphereAltitude(0.16)
         .pathTransitionDuration(0)
+        // tween corto entre posiciones: suaviza el paso a paso real pero, si
+        // llega una posición desfasada, se corrige casi al instante en vez de
+        // deslizarse 1 s por el globo (el default de three-globe)
+        .htmlTransitionDuration(400)
         .htmlElement((d) => buildStationMarker(d as StationMarkerDatum))
         .htmlAltitude((d) => (d as StationMarkerDatum).alt)
         .ringColor((d: object) => (t: number) =>

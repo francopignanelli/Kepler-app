@@ -7,6 +7,8 @@ import type { GeoPoint, GroundTrack, SatellitePosition, StationId, StationInfo }
 
 const POSITION_POLL_MS = 5_000;
 const TRACK_REFRESH_MS = 5 * 60_000;
+/** ante un track fallido o vacío, reintentar en 20 s en vez de esperar 5 min */
+const TRACK_RETRY_MS = 20_000;
 
 export interface StationLive {
   info: StationInfo;
@@ -58,7 +60,15 @@ export function useStations(
           .getStationPosition(id, observerRef.current)
           .then((pos) => {
             if (cancelled) return;
-            setData((prev) => ({ ...prev, [id]: { ...prev[id], position: pos, error: null } }));
+            setData((prev) => {
+              // guardia anti-desorden: bajo latencia variable (p. ej. la
+              // fuente en vivo lenta en prod) una respuesta vieja puede llegar
+              // después de una nueva; si su timestamp es anterior al ya
+              // aplicado, se descarta para que el marcador no salte hacia atrás.
+              const current = prev[id].position;
+              if (current && pos.timestamp < current.timestamp) return prev;
+              return { ...prev, [id]: { ...prev[id], position: pos, error: null } };
+            });
           })
           .catch((err) => {
             if (cancelled) return;
@@ -93,31 +103,43 @@ export function useStations(
     };
   }, [enabledKey]);
 
-  // -- trayectorias (refresh cada 5 min) --------------------------------------
+  // -- trayectorias (refresh cada 5 min, con reintento rápido ante fallo) ------
   useEffect(() => {
     const ids = enabledKey ? (enabledKey.split(",") as StationId[]) : [];
     if (ids.length === 0) return;
     let cancelled = false;
+    const retryTimers: Array<ReturnType<typeof setTimeout>> = [];
 
-    const load = () => {
-      for (const id of ids) {
-        issService
-          .getStationTrack(id, 90, 90, 30)
-          .then((track) => {
-            if (cancelled) return;
-            setData((prev) => ({ ...prev, [id]: { ...prev[id], track } }));
-          })
-          .catch(() => {
-            // la trayectoria es decorativa: el error de posición ya se reporta
-          });
-      }
+    const loadOne = (id: StationId) => {
+      issService
+        .getStationTrack(id, 90, 90, 30)
+        .then((track) => {
+          if (cancelled) return;
+          // solo aceptar un track con puntos: uno vacío (TLE malo, propagación
+          // fallida) dejaría la trayectoria invisible y sin forma de recuperarla
+          if (track.past.length === 0 && track.future.length === 0) {
+            throw new Error("track vacío");
+          }
+          setData((prev) => ({ ...prev, [id]: { ...prev[id], track } }));
+        })
+        .catch(() => {
+          if (cancelled) return;
+          // la fuente (CelesTrak/SGP4) falló o vino vacía: reintentar pronto en
+          // vez de esperar el refresh completo, así la trayectoria no queda
+          // "perdida" varios minutos (ni prender/apagar la capa la traería).
+          const timer = setTimeout(() => loadOne(id), TRACK_RETRY_MS);
+          retryTimers.push(timer);
+        });
     };
+
+    const load = () => ids.forEach(loadOne);
 
     load();
     const interval = setInterval(load, TRACK_REFRESH_MS);
     return () => {
       cancelled = true;
       clearInterval(interval);
+      retryTimers.forEach(clearTimeout);
     };
   }, [enabledKey]);
 

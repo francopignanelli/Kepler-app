@@ -149,9 +149,14 @@ export async function getStationPosition(
       // La ISS tiene fuente en vivo; el resto se propaga localmente
       if (stationId !== "iss") return getSgp4Position(stationId);
       try {
+        // timeout corto: si wheretheiss no responde rápido, mejor propagar
+        // con SGP4 (preciso a ~1 km) que dejar la posición atrasada varios
+        // segundos esperando la fuente en vivo. En prod wheretheiss suele
+        // tardar ~9 s y eso hacía que la ISS quedara "pegada" atrás.
         const data = await fetchJson<WhereTheIssPosition>(
           "wheretheiss",
           `https://api.wheretheiss.at/v1/satellites/${station.noradId}?units=kilometers`,
+          { timeoutMs: 3500 },
         );
         return {
           noradId: station.noradId,
