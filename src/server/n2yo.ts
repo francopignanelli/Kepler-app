@@ -34,14 +34,24 @@ interface N2yoAboveResponse {
   }>;
 }
 
-/** Un reintento moderado: N2YO devuelve 5xx esporádicos bajo carga. */
+/** timeout por intento: deja margen bajo el maxDuration de la ruta */
+const N2YO_TIMEOUT_MS = 8_000;
+
+/**
+ * Un reintento moderado, solo para 5xx esporádicos de N2YO bajo carga.
+ * Un timeout o error de red (status null) NO se reintenta: reintentar un
+ * cuelgue solo duplica la espera sin mejorar nada, y agota el presupuesto
+ * de tiempo de la función serverless.
+ */
 async function fetchWithRetry<T>(url: string): Promise<T> {
   try {
-    return await fetchJson<T>("n2yo", url);
+    return await fetchJson<T>("n2yo", url, { timeoutMs: N2YO_TIMEOUT_MS });
   } catch (err) {
-    if (err instanceof UpstreamError && err.status !== null && err.status < 500) throw err;
-    await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
-    return fetchJson<T>("n2yo", url);
+    if (err instanceof UpstreamError && err.status !== null && err.status >= 500) {
+      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+      return fetchJson<T>("n2yo", url, { timeoutMs: N2YO_TIMEOUT_MS });
+    }
+    throw err;
   }
 }
 
@@ -52,7 +62,13 @@ export async function getSatellitesAbove(
   searchRadiusDeg = 90,
 ): Promise<SatellitesAbove> {
   const apiKey = getN2yoApiKey();
-  if (!apiKey) throw new MissingApiKeyError("N2YO_API_KEY");
+  if (!apiKey) {
+    // log inequívoco: si esto no aparece en los logs de la función, el 503
+    // que se vio no vino de esta rama (código viejo desplegado, o el error
+    // real es el catch de más abajo con otra causa)
+    console.error("[n2yo] N2YO_API_KEY no está presente en process.env de esta función");
+    throw new MissingApiKeyError("N2YO_API_KEY");
+  }
 
   const catInfo = SAT_CATEGORIES[category];
   // celda de ~11 km: observadores cercanos comparten cache

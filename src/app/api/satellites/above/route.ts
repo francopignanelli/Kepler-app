@@ -5,6 +5,9 @@ import { getSatellitesAbove } from "@/server/n2yo";
 import { MissingApiKeyError } from "@/server/weather";
 
 export const dynamic = "force-dynamic";
+/** N2YO /above puede tardar varios segundos con radio 90°: da margen antes
+ *  de que la plataforma mate la función a mitad de la llamada. */
+export const maxDuration = 20;
 
 export async function GET(request: Request) {
   const guard = guardRequest(request, aboveQuerySchema, {
@@ -21,6 +24,7 @@ export async function GET(request: Request) {
     });
   } catch (err) {
     if (err instanceof MissingApiKeyError) {
+      console.error("[api/satellites/above] MissingApiKeyError capturado en la ruta");
       return apiError(503, "MISSING_API_KEY", "El explorador de satélites no está configurado (N2YO_API_KEY)");
     }
     return handleRouteError(err);
