@@ -1,0 +1,194 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   Kepler — design system
+   Estética: espacial, científica, precisa. Azul profundo + blanco estelar.
+   ========================================================================== */
+
+@theme {
+  /* Paleta espacial */
+  --color-space-950: #040918;
+  --color-space-900: #060f26;
+  --color-space-850: #081432;
+  --color-space-800: #0b1b3f;
+  --color-space-700: #12275a;
+  --color-space-600: #1b3575;
+
+  /* Texto */
+  --color-star-100: #f2f6ff;
+  --color-star-300: #c7d3ee;
+  --color-star-500: #8b9cc4;
+  --color-star-700: #5a6a92;
+
+  /* Acentos */
+  --color-orbit-400: #6f9bff;
+  --color-orbit-500: #4f7dff;
+  --color-iss-400: #5eead4;
+  --color-iss-500: #2dd4bf;
+  --color-alert-400: #fbbf24;
+  --color-danger-400: #fb7185;
+  --color-ok-400: #4ade80;
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-space-grotesk), var(--font-inter), ui-sans-serif, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
+  /* tipografía de marca (wordmark del logo) */
+  --font-brand: var(--font-montserrat), var(--font-inter), ui-sans-serif, sans-serif;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-space-950);
+  color: var(--color-star-100);
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+}
+
+/* Fondo con grilla sutil de coordenadas */
+.bg-grid {
+  background-image:
+    linear-gradient(rgba(111, 155, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(111, 155, 255, 0.045) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+/* Paneles de vidrio */
+.panel {
+  background: color-mix(in srgb, var(--color-space-900) 82%, transparent);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(111, 155, 255, 0.14);
+  border-radius: 0.75rem;
+}
+
+.panel-line {
+  border-color: rgba(111, 155, 255, 0.14);
+}
+
+/* Números tabulares para telemetría */
+.telemetry {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+/* Focus visible accesible */
+:focus-visible {
+  outline: 2px solid var(--color-orbit-400);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Scrollbars discretos */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(111, 155, 255, 0.25) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(111, 155, 255, 0.25);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ==========================================================================
+   Marcadores del globo (html elements de globe.gl)
+   ========================================================================== */
+
+.iss-marker {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  /* cada estación define su color vía style="--marker-color: ..." */
+  --marker-color: var(--color-iss-400);
+}
+.iss-marker__dot {
+  position: absolute;
+  inset: 4px;
+  border-radius: 9999px;
+  background: var(--marker-color);
+  box-shadow:
+    0 0 6px 2px color-mix(in srgb, var(--marker-color) 90%, transparent),
+    0 0 18px 6px color-mix(in srgb, var(--marker-color) 45%, transparent);
+}
+.iss-marker__pulse {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 1.5px solid color-mix(in srgb, var(--marker-color) 80%, transparent);
+  animation: iss-pulse 2.4s ease-out infinite;
+}
+.iss-marker__label {
+  position: absolute;
+  left: 22px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  color: var(--marker-color);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--marker-color) 80%, transparent);
+  white-space: nowrap;
+}
+
+@keyframes iss-pulse {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(2.1);
+    opacity: 0;
+  }
+}
+
+/* Animación de aparición del dashboard */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.fade-up {
+  animation: fade-up 0.45s ease-out both;
+}
+
+/* Loader orbital */
+@keyframes orbit-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.orbit-loader {
+  animation: orbit-spin 1.6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .iss-marker__pulse,
+  .orbit-loader,
+  .fade-up {
+    animation: none !important;
+  }
+  * {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

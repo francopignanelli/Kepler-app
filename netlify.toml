@@ -1,0 +1,11 @@
+# Deploy de Kepler en Netlify (Next.js 16 vía el runtime oficial).
+# Las API keys se configuran en el dashboard de Netlify:
+#   Site settings → Environment variables →
+#   OPENWEATHER_API_KEY / WEATHER_API_KEY / N2YO_API_KEY
+# Nunca se commitean ni se exponen al frontend.
+
+[build]
+  command = "npm run build"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
