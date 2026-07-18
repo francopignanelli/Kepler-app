@@ -10,12 +10,23 @@ interface LocationSearchProps {
   isLocating: boolean;
   /** ubicación actual para priorizar resultados cercanos (ej: barrios) */
   near?: { lat: number; lon: number } | null;
+  /** ocultar el botón de geolocalización (cuando el contenedor ya ofrece uno) */
+  hideLocateButton?: boolean;
+  /** ocupar todo el ancho disponible (para popovers/drawers) */
+  fullWidth?: boolean;
 }
 
 const DEBOUNCE_MS = 350;
 
 /** Buscador de ciudades con autocomplete (debounced) + botón de geolocalización. */
-export function LocationSearch({ onSelect, onUseMyLocation, isLocating, near }: LocationSearchProps) {
+export function LocationSearch({
+  onSelect,
+  onUseMyLocation,
+  isLocating,
+  near,
+  hideLocateButton = false,
+  fullWidth = false,
+}: LocationSearchProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<CitySearchResult[]>([]);
   const [open, setOpen] = useState(false);
@@ -61,8 +72,8 @@ export function LocationSearch({ onSelect, onUseMyLocation, isLocating, near }: 
   }, []);
 
   return (
-    <div ref={containerRef} className="relative flex items-center gap-2">
-      <div className="relative">
+    <div ref={containerRef} className={`relative flex items-center gap-2 ${fullWidth ? "w-full" : ""}`}>
+      <div className={`relative ${fullWidth ? "w-full" : ""}`}>
         <label htmlFor="city-search" className="sr-only">
           Buscar ciudad
         </label>
@@ -74,7 +85,9 @@ export function LocationSearch({ onSelect, onUseMyLocation, isLocating, near }: 
           autoComplete="off"
           onChange={(e) => handleQueryChange(e.target.value)}
           onFocus={() => results.length > 0 && setOpen(true)}
-          className="w-44 rounded-md border panel-line bg-space-900/80 px-3 py-1.5 text-sm text-star-100 placeholder:text-star-700 sm:w-56"
+          className={`rounded-md border panel-line bg-space-900/80 px-3 py-1.5 text-sm text-star-100 placeholder:text-star-700 ${
+            fullWidth ? "w-full" : "w-44 sm:w-56"
+          }`}
           role="combobox"
           aria-expanded={open}
           aria-controls="city-search-results"
@@ -109,6 +122,7 @@ export function LocationSearch({ onSelect, onUseMyLocation, isLocating, near }: 
         )}
       </div>
 
+      {!hideLocateButton && (
       <button
         type="button"
         onClick={onUseMyLocation}
@@ -128,6 +142,7 @@ export function LocationSearch({ onSelect, onUseMyLocation, isLocating, near }: 
         </svg>
         <span className="hidden sm:inline">{isLocating ? "Ubicando…" : "Mi ubicación"}</span>
       </button>
+      )}
     </div>
   );
 }

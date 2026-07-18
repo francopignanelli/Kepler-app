@@ -60,6 +60,10 @@ export function useStations(
           .getStationPosition(id, observerRef.current)
           .then((pos) => {
             if (cancelled) return;
+            // blindaje anti-mezcla: si la respuesta no corresponde a la
+            // estación pedida (proxy/CDN/bug), se descarta en vez de pintar
+            // la posición de una estación sobre el marcador de la otra
+            if (pos.noradId !== STATIONS[id].noradId) return;
             setData((prev) => {
               // guardia anti-desorden: bajo latencia variable (p. ej. la
               // fuente en vivo lenta en prod) una respuesta vieja puede llegar
@@ -115,6 +119,10 @@ export function useStations(
         .getStationTrack(id, 90, 90, 30)
         .then((track) => {
           if (cancelled) return;
+          // blindaje anti-mezcla: el track debe ser de la estación pedida
+          if (track.noradId !== STATIONS[id].noradId) {
+            throw new Error("track de otra estación");
+          }
           // solo aceptar un track con puntos: uno vacío (TLE malo, propagación
           // fallida) dejaría la trayectoria invisible y sin forma de recuperarla
           if (track.past.length === 0 && track.future.length === 0) {

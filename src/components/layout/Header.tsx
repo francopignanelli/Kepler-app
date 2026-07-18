@@ -6,11 +6,9 @@ import { KeplerWordmark } from "@/components/layout/KeplerLogo";
  */
 export function Header({ children }: { children?: React.ReactNode }) {
   return (
-    <header className="panel z-20 m-3 mb-0 flex flex-wrap items-center gap-3 px-4 py-2.5">
+    <header className="panel z-20 m-2 mb-0 flex items-center justify-between gap-3 px-3 py-2 sm:m-3 sm:px-4 sm:py-2.5">
       <KeplerWordmark />
-      <div className="ml-auto flex flex-1 flex-wrap items-center justify-end gap-2 sm:flex-none">
-        {children}
-      </div>
+      <div className="flex items-center gap-2">{children}</div>
     </header>
   );
 }

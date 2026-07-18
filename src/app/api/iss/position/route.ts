@@ -4,6 +4,8 @@ import { guardRequest, handleRouteError } from "@/server/http";
 import { getStationPosition } from "@/server/iss";
 
 export const dynamic = "force-dynamic";
+/** posición + TLE para az/el pueden sumar varios segundos en frío */
+export const maxDuration = 15;
 
 export async function GET(request: Request) {
   const guard = guardRequest(request, stationPositionQuerySchema, {

@@ -7,7 +7,7 @@ import { LayerControls } from "@/components/globe/LayerControls";
 import { IssLiveCard } from "@/components/iss/IssLiveCard";
 import { Header } from "@/components/layout/Header";
 import { LoadingScreen } from "@/components/layout/LoadingScreen";
-import { LocationSearch } from "@/components/location/LocationSearch";
+import { LocationMenu } from "@/components/location/LocationMenu";
 import { AlertSettings } from "@/components/notifications/AlertSettings";
 import { PassList } from "@/components/passes/PassList";
 import { SatelliteExplorer } from "@/components/satellites/SatelliteExplorer";
@@ -54,6 +54,10 @@ const DEFAULT_SAT_FILTERS = Object.fromEntries(
 const SAT_COLORS = Object.fromEntries(
   SAT_CATEGORY_IDS.map((id) => [id, SAT_CATEGORIES[id].color]),
 ) as Record<string, string>;
+
+/** espera máxima de datos de APIs en la pantalla de carga: pasado este
+ *  tiempo se avanza igual para no bloquear la app si algo falla */
+const API_GRACE_MS = 5_000;
 
 function DashboardInner() {
   const { pushToast } = useToast();
@@ -102,9 +106,25 @@ function DashboardInner() {
   const weather = useCurrentWeather(location);
   const alerts = useAlerts(passes.data);
 
+  // -- pantalla de carga --------------------------------------------------------
+  // se libera cuando el globo (con fondo HD) está listo Y llegó la primera
+  // posición de estación; si las APIs tardan más de API_GRACE_MS se avanza igual
   const [globeReady, setGlobeReady] = useState(false);
+  const [apiGraceOver, setApiGraceOver] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setApiGraceOver(true), API_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, []);
+  const hasStationData = stations.some((s) => s.position !== null);
+  const appReady = globeReady && (hasStationData || apiGraceOver);
+
   const [activeTab, setActiveTab] = useState<TabId>("iss");
   const [layers, setLayers] = useState<LayerVisibility>(DEFAULT_LAYERS);
+  const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null);
+  // capas: menú desplegable (cerrado en mobile, abierto en desktop)
+  const [showLayers, setShowLayers] = useState(false);
+  // panel lateral: drawer en mobile, columna fija en desktop
+  const [panelOpen, setPanelOpen] = useState(false);
 
   // hidratar preferencias persistidas al montar: el SSR renderiza defaults y
   // leer localStorage en el inicializador causaría un mismatch de hidratación
@@ -122,9 +142,9 @@ function DashboardInner() {
       ...prev,
       ...storageGet<Partial<LayerVisibility>>(STORAGE_KEYS.layerVisibility, {}),
     }));
+    // en desktop el menú de capas arranca desplegado
+    if (window.matchMedia("(min-width: 1024px)").matches) setShowLayers(true);
   }, []);
-  const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null);
-  const [showLayersMobile, setShowLayersMobile] = useState(false);
 
   const onLayersChange = useCallback((next: LayerVisibility) => {
     setLayers(next);
@@ -166,6 +186,7 @@ function DashboardInner() {
   const onSelectSatellite = useCallback((sat: AboveSatellite) => {
     setSelectedSat(sat);
     setActiveTab("sats");
+    setPanelOpen(true);
   }, []);
 
   const focusSatellite = useCallback(
@@ -180,23 +201,197 @@ function DashboardInner() {
 
   const notificationsAllowed = notificationService.getPermission() === "granted";
 
+  // contenido del panel lateral (columna en desktop, drawer en mobile)
+  const sidePanel = (
+    <>
+      {/* ubicación seleccionada + favoritos */}
+      <div className="panel flex flex-col gap-2 p-3">
+        <div className="flex items-center justify-between gap-2">
+          {location ? (
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-star-100">
+                {location.name}
+                {location.country ? `, ${location.country}` : ""}
+              </p>
+              <p className="telemetry text-[11px] text-star-500">
+                {formatCoords(location.lat, location.lon, 3)}
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-star-500">
+              Sin ubicación: usá el botón de ubicación de arriba.
+            </p>
+          )}
+          {location && (
+            <button
+              type="button"
+              onClick={() => (isFavorite(location) ? removeFavorite(location) : addFavorite(location))}
+              className="shrink-0 rounded-md border panel-line p-1.5 text-alert-400 transition-colors hover:bg-space-700"
+              title={isFavorite(location) ? "Quitar de favoritos" : "Guardar en favoritos"}
+              aria-pressed={isFavorite(location)}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="m12 3 2.6 5.6 6.1.7-4.5 4.2 1.2 6-5.4-3-5.4 3 1.2-6L3.3 9.3l6.1-.7L12 3Z"
+                  fill={isFavorite(location) ? "currentColor" : "none"}
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <span className="sr-only">
+                {isFavorite(location) ? "Quitar de favoritos" : "Guardar en favoritos"}
+              </span>
+            </button>
+          )}
+        </div>
+        {favorites.length > 0 && (
+          <div className="flex flex-wrap gap-1.5" aria-label="Ubicaciones favoritas">
+            {favorites.map((fav) => (
+              <button
+                key={`${fav.lat}-${fav.lon}`}
+                type="button"
+                onClick={() => applyLocation(fav)}
+                className="rounded-full border panel-line px-2.5 py-0.5 text-xs text-star-300 transition-colors hover:bg-space-700"
+              >
+                {fav.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* tabs */}
+      <div className="panel flex gap-1 p-1" role="tablist" aria-label="Paneles de información">
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            role="tab"
+            id={`tab-${tab.id}`}
+            aria-selected={activeTab === tab.id}
+            aria-controls={`tabpanel-${tab.id}`}
+            onClick={() => setActiveTab(tab.id)}
+            className={`flex-1 rounded-md px-1.5 py-1.5 text-[13px] transition-colors sm:px-2 sm:text-sm ${
+              activeTab === tab.id
+                ? "bg-space-700 font-medium text-star-100"
+                : "text-star-500 hover:text-star-300"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* contenido del tab activo */}
+      <div
+        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pb-1"
+        role="tabpanel"
+        id={`tabpanel-${activeTab}`}
+        aria-labelledby={`tab-${activeTab}`}
+      >
+        {activeTab === "iss" && (
+          <>
+            <StationSelector enabled={enabledStations} onToggle={toggleStation} />
+            {stations.length === 0 && (
+              <div className="panel p-4">
+                <p className="text-sm text-star-500">
+                  Activá al menos una estación para ver su telemetría.
+                </p>
+              </div>
+            )}
+            {stations.map((station) => (
+              <StationStatsPanel key={station.info.id} station={station} />
+            ))}
+            {nextVisiblePass && (
+              <div className="panel p-4">
+                <p className="text-[11px] uppercase tracking-widest text-star-500">
+                  Próxima pasada visible (ISS)
+                </p>
+                <p className="mt-1 font-display text-base font-semibold text-star-100">
+                  {formatDateTime(nextVisiblePass.pass.startTime, passes.data?.location.timezone)}
+                </p>
+                <p className="mt-0.5 text-xs text-star-300">
+                  Altura máx {nextVisiblePass.pass.maxElevation}° ·{" "}
+                  {nextVisiblePass.pass.startDirection} → {nextVisiblePass.pass.endDirection}
+                  {nextVisiblePass.scores.skyVisibility !== null &&
+                    ` · Cielo visible ${nextVisiblePass.scores.skyVisibility}%`}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("passes")}
+                  className="mt-2 text-xs text-orbit-400 underline-offset-2 hover:underline"
+                >
+                  Ver todas las pasadas →
+                </button>
+              </div>
+            )}
+            <CurrentWeatherCard
+              weather={weather.weather}
+              error={weather.error}
+              unavailable={weather.unavailable}
+              isLoading={weather.isLoading}
+              hasLocation={location !== null}
+            />
+          </>
+        )}
+
+        {activeTab === "passes" && (
+          <PassList
+            data={passes.data}
+            error={passes.error}
+            isLoading={passes.isLoading}
+            hasLocation={location !== null}
+            onRetry={passes.reload}
+            hasAlert={alerts.hasAlert}
+            onToggleAlert={alerts.toggleAlert}
+            notificationsAllowed={notificationsAllowed}
+          />
+        )}
+
+        {activeTab === "sats" && (
+          <SatelliteExplorer
+            filters={satFilters}
+            onToggleFilter={toggleSatFilter}
+            state={above}
+            hasLocation={location !== null}
+            selected={selectedSat}
+            onSelect={setSelectedSat}
+            onFocus={focusSatellite}
+          />
+        )}
+
+        {activeTab === "live" && <IssLiveCard />}
+
+        {activeTab === "alerts" && (
+          <AlertSettings
+            preferences={alerts.preferences}
+            onPreferencesChange={alerts.updatePreferences}
+            alerts={alerts.alerts}
+            onCancelAlert={alerts.cancelAlert}
+            tzId={passes.data?.location.timezone}
+          />
+        )}
+      </div>
+    </>
+  );
+
   return (
     <div className="flex h-dvh flex-col bg-grid">
-      <LoadingScreen visible={!globeReady} />
+      <LoadingScreen visible={!appReady} />
 
       <Header>
-        <LocationSearch
+        <LocationMenu
+          location={location}
           onSelect={selectCity}
           onUseMyLocation={useBrowserLocation}
           isLocating={isLocating}
-          near={location}
         />
       </Header>
 
-      <main className="flex min-h-0 flex-1 flex-col gap-3 p-3 lg:flex-row">
+      <main className="relative flex min-h-0 flex-1 flex-col gap-3 p-2 sm:p-3 lg:flex-row">
         {/* ------------------------------------------------ globo */}
         <section
-          className="relative min-h-[46vh] flex-1 overflow-hidden rounded-xl border panel-line bg-space-950 lg:min-h-0"
+          className="relative min-h-0 flex-1 overflow-hidden rounded-xl border panel-line bg-space-950"
           aria-label="Visualización del planeta Tierra"
         >
           <GlobeView
@@ -210,28 +405,33 @@ function DashboardInner() {
             focusTarget={focusTarget}
             onReady={onGlobeReady}
           />
-          <div className="absolute left-3 top-3 z-10">
+
+          {/* capas: botón que despliega/oculta su menú (izquierda) */}
+          <div className="absolute left-2 top-2 z-10 sm:left-3 sm:top-3">
             <button
               type="button"
-              onClick={() => setShowLayersMobile((v) => !v)}
-              aria-expanded={showLayersMobile}
-              className="panel mb-1.5 px-2.5 py-1 text-xs text-star-300 sm:hidden"
+              onClick={() => setShowLayers((v) => !v)}
+              aria-expanded={showLayers}
+              className="panel px-2.5 py-1 text-xs text-star-300 transition-colors hover:text-star-100"
             >
-              {showLayersMobile ? "✕ Cerrar capas" : "☰ Capas"}
+              {showLayers ? "✕ Capas" : "☰ Capas"}
             </button>
-            <div className={`w-48 ${showLayersMobile ? "block" : "hidden"} sm:block`}>
-              <LayerControls
-                layers={layers}
-                onChange={onLayersChange}
-                stations={enabledStations}
-                onToggleStation={toggleStation}
-                onFocusStation={focusStationById}
-                onFocusUser={focusUser}
-              />
-            </div>
+            {showLayers && (
+              <div className="mt-1.5 w-48">
+                <LayerControls
+                  layers={layers}
+                  onChange={onLayersChange}
+                  stations={enabledStations}
+                  onToggleStation={toggleStation}
+                  onFocusStation={focusStationById}
+                  onFocusUser={focusUser}
+                />
+              </div>
+            )}
           </div>
+
           {nextVisiblePass && (
-            <div className="panel absolute bottom-3 left-3 z-10 hidden max-w-xs p-3 md:block">
+            <div className="panel absolute bottom-3 left-3 z-10 hidden max-w-xs p-3 lg:block">
               <p className="text-[11px] uppercase tracking-widest text-star-500">
                 Próxima pasada visible
               </p>
@@ -241,179 +441,48 @@ function DashboardInner() {
               </p>
             </div>
           )}
+
+          {/* abrir el panel en mobile (derecha, sin tapar el globo hasta abrirse) */}
+          <button
+            type="button"
+            onClick={() => setPanelOpen(true)}
+            className="panel absolute bottom-3 right-3 z-10 flex items-center gap-1.5 rounded-full px-3.5 py-2 text-sm text-star-100 shadow-lg lg:hidden"
+            aria-label="Abrir panel de información"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-orbit-400">
+              <path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+            Panel
+          </button>
         </section>
 
-        {/* ------------------------------------------------ panel lateral */}
-        <aside className="flex w-full min-h-0 flex-col gap-3 lg:w-[410px]">
-          {/* ubicación seleccionada + favoritos */}
-          <div className="panel flex flex-col gap-2 p-3">
-            <div className="flex items-center justify-between gap-2">
-              {location ? (
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-star-100">
-                    {location.name}
-                    {location.country ? `, ${location.country}` : ""}
-                  </p>
-                  <p className="telemetry text-[11px] text-star-500">
-                    {formatCoords(location.lat, location.lon, 3)}
-                  </p>
-                </div>
-              ) : (
-                <p className="text-sm text-star-500">
-                  Sin ubicación: buscá una ciudad o usá tu posición.
-                </p>
-              )}
-              {location && (
+        {/* ------------------------------------------------ panel lateral desktop */}
+        <aside className="hidden min-h-0 w-[410px] flex-col gap-3 lg:flex">{sidePanel}</aside>
+
+        {/* ------------------------------------------------ drawer mobile */}
+        {panelOpen && (
+          <div className="fixed inset-0 z-30 lg:hidden" role="dialog" aria-label="Panel de información">
+            <button
+              type="button"
+              aria-label="Cerrar panel"
+              onClick={() => setPanelOpen(false)}
+              className="absolute inset-0 bg-space-950/60 backdrop-blur-[2px]"
+            />
+            <div className="absolute inset-y-0 right-0 flex w-[88%] max-w-[400px] flex-col gap-3 border-l panel-line bg-space-900/95 p-3 backdrop-blur">
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] uppercase tracking-widest text-star-500">Kepler</p>
                 <button
                   type="button"
-                  onClick={() => (isFavorite(location) ? removeFavorite(location) : addFavorite(location))}
-                  className="shrink-0 rounded-md border panel-line p-1.5 text-alert-400 transition-colors hover:bg-space-700"
-                  title={isFavorite(location) ? "Quitar de favoritos" : "Guardar en favoritos"}
-                  aria-pressed={isFavorite(location)}
+                  onClick={() => setPanelOpen(false)}
+                  className="rounded-md border panel-line px-2 py-1 text-xs text-star-300 transition-colors hover:bg-space-700"
                 >
-                  <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      d="m12 3 2.6 5.6 6.1.7-4.5 4.2 1.2 6-5.4-3-5.4 3 1.2-6L3.3 9.3l6.1-.7L12 3Z"
-                      fill={isFavorite(location) ? "currentColor" : "none"}
-                      stroke="currentColor"
-                      strokeWidth="1.6"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                  <span className="sr-only">
-                    {isFavorite(location) ? "Quitar de favoritos" : "Guardar en favoritos"}
-                  </span>
+                  ✕ Cerrar
                 </button>
-              )}
-            </div>
-            {favorites.length > 0 && (
-              <div className="flex flex-wrap gap-1.5" aria-label="Ubicaciones favoritas">
-                {favorites.map((fav) => (
-                  <button
-                    key={`${fav.lat}-${fav.lon}`}
-                    type="button"
-                    onClick={() => applyLocation(fav)}
-                    className="rounded-full border panel-line px-2.5 py-0.5 text-xs text-star-300 transition-colors hover:bg-space-700"
-                  >
-                    {fav.name}
-                  </button>
-                ))}
               </div>
-            )}
+              <div className="flex min-h-0 flex-1 flex-col gap-3">{sidePanel}</div>
+            </div>
           </div>
-
-          {/* tabs */}
-          <div className="panel flex gap-1 p-1" role="tablist" aria-label="Paneles de información">
-            {TABS.map((tab) => (
-              <button
-                key={tab.id}
-                role="tab"
-                id={`tab-${tab.id}`}
-                aria-selected={activeTab === tab.id}
-                aria-controls={`tabpanel-${tab.id}`}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex-1 rounded-md px-2 py-1.5 text-sm transition-colors ${
-                  activeTab === tab.id
-                    ? "bg-space-700 font-medium text-star-100"
-                    : "text-star-500 hover:text-star-300"
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          {/* contenido del tab activo */}
-          <div
-            className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pb-1"
-            role="tabpanel"
-            id={`tabpanel-${activeTab}`}
-            aria-labelledby={`tab-${activeTab}`}
-          >
-            {activeTab === "iss" && (
-              <>
-                <StationSelector enabled={enabledStations} onToggle={toggleStation} />
-                {stations.length === 0 && (
-                  <div className="panel p-4">
-                    <p className="text-sm text-star-500">
-                      Activá al menos una estación para ver su telemetría.
-                    </p>
-                  </div>
-                )}
-                {stations.map((station) => (
-                  <StationStatsPanel key={station.info.id} station={station} />
-                ))}
-                {nextVisiblePass && (
-                  <div className="panel p-4">
-                    <p className="text-[11px] uppercase tracking-widest text-star-500">
-                      Próxima pasada visible (ISS)
-                    </p>
-                    <p className="mt-1 font-display text-base font-semibold text-star-100">
-                      {formatDateTime(nextVisiblePass.pass.startTime, passes.data?.location.timezone)}
-                    </p>
-                    <p className="mt-0.5 text-xs text-star-300">
-                      Altura máx {nextVisiblePass.pass.maxElevation}° ·{" "}
-                      {nextVisiblePass.pass.startDirection} → {nextVisiblePass.pass.endDirection}
-                      {nextVisiblePass.scores.skyVisibility !== null &&
-                        ` · Cielo visible ${nextVisiblePass.scores.skyVisibility}%`}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab("passes")}
-                      className="mt-2 text-xs text-orbit-400 underline-offset-2 hover:underline"
-                    >
-                      Ver todas las pasadas →
-                    </button>
-                  </div>
-                )}
-                <CurrentWeatherCard
-                  weather={weather.weather}
-                  error={weather.error}
-                  unavailable={weather.unavailable}
-                  isLoading={weather.isLoading}
-                  hasLocation={location !== null}
-                />
-              </>
-            )}
-
-            {activeTab === "passes" && (
-              <PassList
-                data={passes.data}
-                error={passes.error}
-                isLoading={passes.isLoading}
-                hasLocation={location !== null}
-                onRetry={passes.reload}
-                hasAlert={alerts.hasAlert}
-                onToggleAlert={alerts.toggleAlert}
-                notificationsAllowed={notificationsAllowed}
-              />
-            )}
-
-            {activeTab === "sats" && (
-              <SatelliteExplorer
-                filters={satFilters}
-                onToggleFilter={toggleSatFilter}
-                state={above}
-                hasLocation={location !== null}
-                selected={selectedSat}
-                onSelect={setSelectedSat}
-                onFocus={focusSatellite}
-              />
-            )}
-
-            {activeTab === "live" && <IssLiveCard />}
-
-            {activeTab === "alerts" && (
-              <AlertSettings
-                preferences={alerts.preferences}
-                onPreferencesChange={alerts.updatePreferences}
-                alerts={alerts.alerts}
-                onCancelAlert={alerts.cancelAlert}
-                tzId={passes.data?.location.timezone}
-              />
-            )}
-          </div>
-        </aside>
+        )}
       </main>
     </div>
   );

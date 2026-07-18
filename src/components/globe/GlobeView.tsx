@@ -24,6 +24,8 @@ import type { AboveSatellite, GroundTrack, UserLocation } from "@/types";
 
 const EARTH_RADIUS_KM = 6371;
 const CELESTIAL_UPDATE_MS = 60_000;
+/** máximo que la pantalla de carga espera al fondo HD antes de seguir igual */
+const HD_MAX_WAIT_MS = 12_000;
 /** tope de alejamiento de la cámara, en radios de globo (altitud ≈ 4.5) */
 const MAX_CAMERA_DISTANCE_R = 5.5;
 
@@ -246,6 +248,18 @@ export default function GlobeView({
       const { default: Globe } = await import("globe.gl");
       if (disposed || !containerRef.current) return;
 
+      // la pantalla de carga se libera cuando el globo está listo Y el fondo
+      // HD de la Vía Láctea quedó aplicado (antes a veces quedaba la versión
+      // en baja para siempre); con tope de seguridad por si la HD nunca llega
+      let globeVisualReady = false;
+      let hdReady = false;
+      let readyNotified = false;
+      const maybeReady = () => {
+        if (disposed || readyNotified || !globeVisualReady || !hdReady) return;
+        readyNotified = true;
+        onReady();
+      };
+
       const globe = new Globe(containerRef.current, {
         animateIn: false,
         rendererConfig: { antialias: true },
@@ -294,7 +308,8 @@ export default function GlobeView({
         .labelDotRadius(0)
         .labelColor(() => "rgba(255,255,255,0.92)")
         .onGlobeReady(() => {
-          if (!disposed) onReady();
+          globeVisualReady = true;
+          maybeReady();
         })
         .onZoom((pov) => {
           altitudeRef.current = pov.altitude;
@@ -365,8 +380,16 @@ export default function GlobeView({
 
       // fondo: swap a la Vía Láctea HD cuando termina de descargar
       const cancelHdPreload = preloadMilkyWayHd(() => {
-        if (!disposed) globe.backgroundImageUrl(MILKY_WAY_URL_HD);
+        if (disposed) return;
+        globe.backgroundImageUrl(MILKY_WAY_URL_HD);
+        hdReady = true;
+        maybeReady();
       });
+      // tope: si la HD no llega (red caída), no bloquear la app para siempre
+      const hdCapTimer = setTimeout(() => {
+        hdReady = true;
+        maybeReady();
+      }, HD_MAX_WAIT_MS);
 
       // actualizar posiciones de Sol y Luna cada minuto
       celestialTimer = setInterval(() => {
@@ -392,6 +415,7 @@ export default function GlobeView({
       // guardar cleanup en el ref del contenedor
       cleanupRef.current = () => {
         cancelAnimationFrame(pulseFrame);
+        clearTimeout(hdCapTimer);
         cancelHdPreload();
         document.removeEventListener("visibilitychange", onVisibility);
         resizeObserver.disconnect();
@@ -454,20 +478,18 @@ export default function GlobeView({
 
   // -- trayectorias de estaciones ------------------------------------------------
   // `stations` cambia de referencia cada 5 s (poll de posición), pero el
-  // ground track solo se recalcula cada 5 min. Si este efecto dependiera de
-  // `stations` directamente, reconstruiría las líneas 3D desde cero 12 veces
-  // por minuto sin necesidad: con pathTransitionDuration(0) cada reconstrucción
-  // es un destroy+create inmediato de la geometría, y bajo ese churn constante
-  // el path puede quedar sin recrearse a mitad de un ciclo (la trayectoria
-  // "se pierde" y ni apagar/prender la capa la trae de vuelta, porque el
-  // siguiente poll de posición vuelve a dispararlo). Se usa una firma estable
-  // (id de estación + timestamp del track) como dependencia real, y un ref
-  // para leer los datos actuales de estación sin declarar `stations` como dep.
+  // ground track solo se recalcula cada 5 min: el efecto depende de una firma
+  // estable (id + timestamp del track) para no re-digestar sin necesidad.
+  // Además los datums son ESTABLES por `${id}-${kind}` (se mutan, no se
+  // recrean): three-globe actualiza la geometría del path existente en vez de
+  // destruir/crear, así la trayectoria nunca puede quedar "perdida" a mitad
+  // de una reconstrucción.
   const stationsRef = useRef(stations);
   useEffect(() => {
     stationsRef.current = stations;
   }, [stations]);
   const trackSignature = stations.map((s) => `${s.info.id}:${s.track?.generatedAt ?? 0}`).join("|");
+  const pathDatumsRef = useRef(new Map<string, PathDatum>());
 
   useEffect(() => {
     const globe = globeRef.current;
@@ -484,10 +506,16 @@ export default function GlobeView({
     const paths: PathDatum[] = stationsRef.current.flatMap((s) => {
       if (!s.track) return [];
       const track: GroundTrack = s.track;
-      return [
-        { id: `${s.info.id}-past`, kind: "past" as const, color: s.info.color, pts: track.past.map(toPoint) },
-        { id: `${s.info.id}-future`, kind: "future" as const, color: s.info.color, pts: track.future.map(toPoint) },
-      ];
+      return (["past", "future"] as const).map((kind) => {
+        const key = `${s.info.id}-${kind}`;
+        let datum = pathDatumsRef.current.get(key);
+        if (!datum) {
+          datum = { id: key, kind, color: s.info.color, pts: [] };
+          pathDatumsRef.current.set(key, datum);
+        }
+        datum.pts = (kind === "past" ? track.past : track.future).map(toPoint);
+        return datum;
+      });
     });
     const rgb = (d: PathDatum) => hexToRgbString(d.color);
     globe
@@ -591,7 +619,7 @@ export default function GlobeView({
       {/* leyenda de trayectorias por estación: línea llena = recorrido ya
           hecho, línea punteada = trayectoria prevista */}
       {layers.track && stations.length > 0 && (
-        <div className="panel pointer-events-none absolute bottom-2 right-2 flex flex-col gap-1 px-2.5 py-1.5 text-[10px] text-star-300">
+        <div className="panel pointer-events-none absolute bottom-2 right-2 hidden flex-col gap-1 px-2.5 py-1.5 text-[10px] text-star-300 lg:flex">
           {stations.map((s) => (
             <span key={s.info.id} className="flex flex-col gap-0.5">
               <span className="flex items-center gap-1.5">

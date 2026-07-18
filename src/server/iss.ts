@@ -80,9 +80,14 @@ export async function getStationTle(stationId: StationId): Promise<Tle> {
     TLE_TTL_MS,
     async () => {
       try {
+        // timeouts cortos: en serverless cada instancia fría arranca sin cache
+        // y la función tiene un presupuesto de ~10 s; si el TLE tarda, mejor
+        // fallar rápido al respaldo que dejar morir la request (la trayectoria
+        // "desaparecía" en producción justamente por esto)
         const text = await fetchText(
           "celestrak",
           `https://celestrak.org/NORAD/elements/gp.php?CATNR=${station.noradId}&FORMAT=tle`,
+          4_000,
         );
         const parsed = parseCelestrakTle(text, station.name);
         return { ...parsed, fetchedAt: Date.now(), source: "celestrak" as const };
@@ -92,6 +97,7 @@ export async function getStationTle(stationId: StationId): Promise<Tle> {
         const data = await fetchJson<WhereTheIssTle>(
           "wheretheiss",
           `https://api.wheretheiss.at/v1/satellites/${station.noradId}/tles`,
+          { timeoutMs: 3_500 },
         );
         return {
           name: data.name || "ISS (ZARYA)",

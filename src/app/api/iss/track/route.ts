@@ -4,6 +4,9 @@ import { getStationTrack } from "@/server/iss";
 import { trackQuerySchema } from "@/schemas";
 
 export const dynamic = "force-dynamic";
+/** en frío puede necesitar TLE remoto + barrido SGP4: margen sobre los 10 s
+ *  default de la plataforma (si lo mata, la trayectoria desaparece) */
+export const maxDuration = 20;
 
 export async function GET(request: Request) {
   const guard = guardRequest(request, trackQuerySchema, {
