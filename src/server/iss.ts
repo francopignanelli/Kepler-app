@@ -7,6 +7,7 @@
  */
 
 import { getOrFetch } from "@/lib/cache";
+import { getN2yoApiKey } from "@/lib/env";
 import {
   computeGroundTrack,
   getLookAngles,
@@ -45,6 +46,11 @@ interface WhereTheIssTle {
   header: string;
   line1: string;
   line2: string;
+}
+
+interface N2yoTleResponse {
+  info: { satid: number; satname: string; transactionscount: number };
+  tle: string;
 }
 
 interface WhereTheIssCoordinates {
@@ -92,19 +98,43 @@ export async function getStationTle(stationId: StationId): Promise<Tle> {
         const parsed = parseCelestrakTle(text, station.name);
         return { ...parsed, fetchedAt: Date.now(), source: "celestrak" as const };
       } catch (err) {
-        // WhereTheISS solo trackea la ISS: para el resto no hay respaldo
-        if (stationId !== "iss") throw err;
-        const data = await fetchJson<WhereTheIssTle>(
-          "wheretheiss",
-          `https://api.wheretheiss.at/v1/satellites/${station.noradId}/tles`,
-          { timeoutMs: 3_500 },
+        // Respaldos por estación: WhereTheISS solo trackea la ISS; para el
+        // resto se usa el endpoint TLE de N2YO (si hay key). Sin respaldo,
+        // la estación se queda sin trayectoria cuando CelesTrak falla o
+        // bloquea la IP compartida del hosting.
+        if (stationId === "iss") {
+          const data = await fetchJson<WhereTheIssTle>(
+            "wheretheiss",
+            `https://api.wheretheiss.at/v1/satellites/${station.noradId}/tles`,
+            { timeoutMs: 3_500 },
+          );
+          return {
+            name: data.name || "ISS (ZARYA)",
+            line1: data.line1,
+            line2: data.line2,
+            fetchedAt: Date.now(),
+            source: "wheretheiss" as const,
+          };
+        }
+        const n2yoKey = getN2yoApiKey();
+        if (!n2yoKey) throw err;
+        const data = await fetchJson<N2yoTleResponse>(
+          "n2yo",
+          `https://api.n2yo.com/rest/v1/satellite/tle/${station.noradId}&apiKey=${n2yoKey}`,
+          { timeoutMs: 4_000 },
         );
+        const lines = (data.tle ?? "").split(/\r?\n/).map((l) => l.trim());
+        const line1 = lines.find((l) => l.startsWith("1 "));
+        const line2 = lines.find((l) => l.startsWith("2 "));
+        if (!line1 || !line2) {
+          throw new UpstreamError("n2yo", null, "N2YO devolvió un TLE inválido");
+        }
         return {
-          name: data.name || "ISS (ZARYA)",
-          line1: data.line1,
-          line2: data.line2,
+          name: data.info?.satname || station.name,
+          line1,
+          line2,
           fetchedAt: Date.now(),
-          source: "wheretheiss" as const,
+          source: "n2yo" as const,
         };
       }
     },

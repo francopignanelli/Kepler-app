@@ -1,9 +1,35 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { KeplerLogo } from "@/components/layout/KeplerLogo";
+
+/** Frases que rotan mientras carga: cuentan qué está pasando de verdad. */
+const LOADING_PHRASES = [
+  "Ubicando satélites en órbita…",
+  "Conectando con las APIs orbitales…",
+  "Descargando elementos orbitales (TLE)…",
+  "Calculando trayectorias con SGP4…",
+  "Renderizando la Vía Láctea en HD…",
+  "Alineando el Sol y la Luna…",
+  "Buscando la ISS sobre tu horizonte…",
+  "Calibrando el globo 3D…",
+];
+
+const PHRASE_ROTATE_MS = 1_700;
 
 /** Pantalla de carga con la identidad de Kepler, mostrada hasta que el globo está listo. */
 export function LoadingScreen({ visible }: { visible: boolean }) {
+  const [phraseIndex, setPhraseIndex] = useState(0);
+
+  useEffect(() => {
+    if (!visible) return;
+    const interval = setInterval(
+      () => setPhraseIndex((i) => (i + 1) % LOADING_PHRASES.length),
+      PHRASE_ROTATE_MS,
+    );
+    return () => clearInterval(interval);
+  }, [visible]);
+
   return (
     <div
       aria-hidden={!visible}
@@ -33,11 +59,19 @@ export function LoadingScreen({ visible }: { visible: boolean }) {
           <circle cx="172" cy="90" r="3" fill="#5eead4" />
         </svg>
       </div>
-      <div className="flex flex-col items-center gap-1">
+      {/* margen extra: el anillo del spinner sobresale ~42px del logo */}
+      <div className="mt-12 flex flex-col items-center gap-2">
         <span className="font-brand text-xl font-light uppercase tracking-[0.55em] text-orbit-400">
           Kepler
         </span>
-        <span className="telemetry text-xs text-star-500">Inicializando telemetría orbital…</span>
+        <span
+          key={phraseIndex}
+          className="fade-up telemetry text-xs text-star-500"
+          role="status"
+          aria-live="polite"
+        >
+          {LOADING_PHRASES[phraseIndex]}
+        </span>
       </div>
     </div>
   );

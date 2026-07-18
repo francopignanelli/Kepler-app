@@ -45,7 +45,7 @@ export interface Tle {
   line2: string;
   /** epoch de descarga, ms UTC */
   fetchedAt: number;
-  source: "celestrak" | "wheretheiss";
+  source: "celestrak" | "wheretheiss" | "n2yo";
 }
 
 export interface SatellitePosition {
